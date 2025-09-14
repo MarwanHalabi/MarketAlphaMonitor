@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: 'market-tracker-dashboards'
+    orgId: 1
+    folder: 'Market Tracker'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
