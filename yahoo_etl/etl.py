@@ -18,7 +18,7 @@ class YahooETL:
         self.engine = create_engine(database_url)
         self.Session = sessionmaker(bind=self.engine)
         
-        # Default symbols to track
+        # Default symbols to track, add more as needed
         self.symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX"]
         
     def fetch_data(self, symbol: str, period: str = "1d", interval: str = "1m") -> pd.DataFrame:
