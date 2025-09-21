@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yahoo-etl"
+version = "0.1.0"
+description = "Yahoo Finance ETL utilities"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["yahoo_etl", "yahoo_etl.*"]
+exclude = ["tests*"]

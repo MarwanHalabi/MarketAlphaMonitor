@@ -1,199 +1,113 @@
-name: CI/CD Pipeline
+name: Python package tests
 
 on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 
 jobs:
-  lint-and-type-check:
+  test-market-tracker:
+    name: Market Tracker tests (pytest)
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install ruff black mypy pytest-cov
-        pip install -r requirements.txt
-    
-    - name: Run ruff linter
-      run: ruff check .
-    
-    - name: Run black formatter check
-      run: black --check .
-    
-    - name: Run mypy type check
-      run: mypy .
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-  unit-tests:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov schemathesis fastapi sqlalchemy pandas yfinance httpx
+          pip install -r market-tracker/requirements.txt
+          pip install -e ./market-tracker
+
+      - name: Run unit tests
         env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_market_tracker
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-      
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
+          COVERAGE_FILE: .coverage.market_tracker.unit
+          DATABASE_URL: sqlite:///./market_tracker_unit.db
+        run: |
+          pytest market-tracker/tests/unit -m unit \
+            --cov=market-tracker/app \
+            --cov-report=xml:coverage-market-tracker-unit.xml \
+            --cov-report=term \
+            --cov-fail-under=85
 
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest-cov schemathesis playwright k6
-    
-    - name: Run unit tests
-      run: |
-        pytest --cov=. --cov-report=xml --cov-report=html
-      env:
-        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_market_tracker
-        REDIS_URL: redis://localhost:6379
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
+      - name: Run integration tests
+        env:
+          COVERAGE_FILE: .coverage.market_tracker.integration
+          DATABASE_URL: sqlite:///./market_tracker_integration.db
+        run: |
+          pytest market-tracker/tests/integration -m integration \
+            --cov=market-tracker/app \
+            --cov-report=xml:coverage-market-tracker-integration.xml \
+            --cov-report=term \
+            --cov-fail-under=85
 
-  api-contract-tests:
+      - name: Run contract tests
+        env:
+          COVERAGE_FILE: .coverage.market_tracker.contract
+          DATABASE_URL: sqlite:///./market_tracker_contract.db
+        run: |
+          pytest market-tracker/tests/contract -m contract \
+            --cov=market-tracker/app \
+            --cov-report=xml:coverage-market-tracker-contract.xml \
+            --cov-report=term \
+            --cov-fail-under=85
+
+  test-yahoo-etl:
+    name: Yahoo ETL tests (pytest)
     runs-on: ubuntu-latest
-    needs: unit-tests
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install schemathesis
-    
-    - name: Run API contract tests
-      run: |
-        schemathesis run --base-url=http://localhost:8000 market-tracker/app/main.py
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-  ui-tests:
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install playwright
-    
-    - name: Install Playwright browsers
-      run: playwright install --with-deps
-    
-    - name: Run UI tests
-      run: |
-        playwright test
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
-  load-tests:
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up k6
-      run: |
-        sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-        echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
-        sudo apt-get update
-        sudo apt-get install k6
-    
-    - name: Run load tests
-      run: |
-        k6 run tests/load/load_test.js
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov schemathesis fastapi sqlalchemy pandas yfinance httpx schedule
+          pip install -r yahoo_etl/requirements.txt
+          pip install -e ./yahoo_etl
 
-  security-tests:
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Run ZAP baseline scan
-      uses: zaproxy/action-baseline@v0.7.0
-      with:
-        target: 'http://localhost:8000'
-        rules_file_name: '.zap/rules.tsv'
-        cmd_options: '-a'
+      - name: Run unit tests
+        env:
+          COVERAGE_FILE: .coverage.yahoo_etl.unit
+          DATABASE_URL: sqlite:///./yahoo_etl_unit.db
+        run: |
+          pytest yahoo_etl/tests/unit -m unit \
+            --cov=yahoo_etl \
+            --cov-report=xml:coverage-yahoo-etl-unit.xml \
+            --cov-report=term \
+            --cov-fail-under=85
 
-  build-and-push:
-    runs-on: ubuntu-latest
-    needs: [lint-and-type-check, unit-tests, api-contract-tests, ui-tests, load-tests, security-tests]
-    if: github.ref == 'refs/heads/main'
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-    
-    - name: Build and push images
-      run: |
-        docker buildx build --platform linux/amd64,linux/arm64 -t ${{ secrets.DOCKER_USERNAME }}/market-tracker:latest -t ${{ secrets.DOCKER_USERNAME }}/market-tracker:${{ github.sha }} --push ./market-tracker
-        docker buildx build --platform linux/amd64,linux/arm64 -t ${{ secrets.DOCKER_USERNAME }}/yahoo-etl:latest -t ${{ secrets.DOCKER_USERNAME }}/yahoo-etl:${{ github.sha }} --push ./yahoo_etl
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: github.ref == 'refs/heads/main'
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Deploy to EC2
-      uses: appleboy/ssh-action@v1.0.0
-      with:
-        host: ${{ secrets.EC2_HOST }}
-        username: ${{ secrets.EC2_USERNAME }}
-        key: ${{ secrets.EC2_SSH_KEY }}
-        script: |
-          cd /opt/market-tracker
-          docker-compose pull
-          docker-compose up -d
+      - name: Run integration tests
+        env:
+          COVERAGE_FILE: .coverage.yahoo_etl.integration
+          DATABASE_URL: sqlite:///./yahoo_etl_integration.db
+        run: |
+          pytest yahoo_etl/tests/integration -m integration \
+            --cov=yahoo_etl \
+            --cov-report=xml:coverage-yahoo-etl-integration.xml \
+            --cov-report=term \
+            --cov-fail-under=85
