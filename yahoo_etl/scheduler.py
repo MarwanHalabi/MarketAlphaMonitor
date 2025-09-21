@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def run_etl():
-    """Run ETL process for all symbols"""
+    """Run ETL process for all symbols, TODO: save the symbols in a config or database"""
     try:
         database_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/market_tracker")
         etl = YahooETL(database_url)
