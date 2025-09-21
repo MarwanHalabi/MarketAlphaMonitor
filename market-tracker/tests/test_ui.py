@@ -1,166 +1,65 @@
-import pytest
-from playwright.sync_api import sync_playwright, Page, Browser
-from fastapi.testclient import TestClient
-from app.main import app
+import re
+import sys
+from pathlib import Path
 
-@pytest.fixture(scope="module")
-def browser():
-    """Create browser instance for testing"""
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        yield browser
-        browser.close()
+import os
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-@pytest.fixture
-def page(browser: Browser):
-    """Create page instance for testing"""
-    page = browser.new_page()
-    yield page
-    page.close()
+TESTS_ROOT = ROOT_DIR / "tests"
+if str(TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TESTS_ROOT))
 
-@pytest.fixture
-def client():
-    """Create test client"""
-    return TestClient(app)
+MARKET_TRACKER_ROOT = ROOT_DIR / "market-tracker"
+if str(MARKET_TRACKER_ROOT) not in sys.path:
+    sys.path.insert(0, str(MARKET_TRACKER_ROOT))
 
-class TestUI:
-    def test_root_page_loads(self, page: Page, client: TestClient):
-        """Test that root page loads correctly"""
-        # Start the server
-        with client:
-            # Navigate to the root page
-            response = client.get("/")
-            assert response.status_code == 200
-            
-            # Get the HTML content
-            html_content = response.text
-            
-            # Set the content in the page
-            page.set_content(html_content)
-            
-            # Check page title
-            title = page.title()
-            assert "Market Tracker" in title
-            
-            # Check for main heading
-            heading = page.locator("h1").text_content()
-            assert "Market Tracker" in heading
-            
-            # Check for API endpoints section
-            endpoints_section = page.locator("h2:has-text('API Endpoints')")
-            assert endpoints_section.count() == 1
-            
-            # Check for specific endpoints
-            quotes_endpoint = page.locator("text=GET /api/v1/quotes")
-            assert quotes_endpoint.count() == 1
-            
-            indicators_endpoint = page.locator("text=GET /api/v1/indicators")
-            assert indicators_endpoint.count() == 1
-            
-            health_endpoint = page.locator("text=GET /api/v1/health")
-            assert health_endpoint.count() == 1
+os.environ.setdefault("DATABASE_URL", "sqlite:///./market_tracker_test.db")
 
-    def test_page_styling(self, page: Page, client: TestClient):
-        """Test that page has proper styling"""
-        with client:
-            response = client.get("/")
-            page.set_content(response.text)
-            
-            # Check that CSS is applied
-            body = page.locator("body")
-            computed_style = body.evaluate("el => getComputedStyle(el)")
-            assert "font-family" in str(computed_style)
-            
-            # Check for container class
-            container = page.locator(".container")
-            assert container.count() == 1
-            
-            # Check for endpoint styling
-            endpoints = page.locator(".endpoint")
-            assert endpoints.count() >= 3  # At least 3 API endpoints
+from app.main import read_root
+from tests.fastapi_base import FastAPITestCase
 
-    def test_external_links(self, page: Page, client: TestClient):
-        """Test external links are present and correct"""
-        with client:
-            response = client.get("/")
-            page.set_content(response.text)
-            
-            # Check for Grafana link
-            grafana_link = page.locator("a[href='http://localhost:3000']")
-            assert grafana_link.count() == 1
-            
-            # Check link text
-            link_text = grafana_link.text_content()
-            assert "Grafana Dashboard" in link_text
 
-    def test_responsive_design(self, page: Page, client: TestClient):
-        """Test responsive design elements"""
-        with client:
-            response = client.get("/")
-            page.set_content(response.text)
-            
-            # Test mobile viewport
-            page.set_viewport_size({"width": 375, "height": 667})
-            
-            # Check that content is still visible
-            heading = page.locator("h1")
-            assert heading.is_visible()
-            
-            # Test desktop viewport
-            page.set_viewport_size({"width": 1920, "height": 1080})
-            
-            # Check that content is still visible
-            assert heading.is_visible()
+class UITests(FastAPITestCase):
+    load_sample_data = False
 
-    def test_page_performance(self, page: Page, client: TestClient):
-        """Test page performance metrics"""
-        with client:
-            response = client.get("/")
-            page.set_content(response.text)
-            
-            # Check that page loads quickly
-            # In a real test, you might measure actual load time
-            assert len(response.text) < 10000  # Page should be reasonably sized
-            
-            # Check for any console errors
-            # This would require setting up console event listeners in a real test
+    def setUp(self) -> None:
+        super().setUp()
+        self.html = self.run_async(read_root())
 
-    def test_accessibility(self, page: Page, client: TestClient):
-        """Test basic accessibility features"""
-        with client:
-            response = client.get("/")
-            page.set_content(response.text)
-            
-            # Check for proper heading hierarchy
-            h1_count = page.locator("h1").count()
-            assert h1_count == 1
-            
-            h2_count = page.locator("h2").count()
-            assert h2_count >= 2  # At least API Endpoints and External Services
-            
-            # Check for alt text on images (if any)
-            images = page.locator("img")
-            for i in range(images.count()):
-                img = images.nth(i)
-                alt_text = img.get_attribute("alt")
-                # If there are images, they should have alt text
-                if alt_text is not None:
-                    assert len(alt_text) > 0
+    def test_root_page_loads(self) -> None:
+        self.assertIn("<h1>📈 Market Tracker</h1>", self.html)
+        self.assertIn("API Endpoints", self.html)
+        self.assertIn("External Services", self.html)
 
-    def test_api_endpoint_descriptions(self, page: Page, client: TestClient):
-        """Test that API endpoint descriptions are present"""
-        with client:
-            response = client.get("/")
-            page.set_content(response.text)
-            
-            # Check for quotes endpoint description
-            quotes_desc = page.locator("text=Get latest market quotes")
-            assert quotes_desc.count() == 1
-            
-            # Check for indicators endpoint description
-            indicators_desc = page.locator("text=Get technical indicators")
-            assert indicators_desc.count() == 1
-            
-            # Check for health endpoint description
-            health_desc = page.locator("text=Health check endpoint")
-            assert health_desc.count() == 1
+    def test_page_styling(self) -> None:
+        self.assertIn("body { font-family: Arial, sans-serif; margin: 40px; }", self.html)
+        self.assertIn("class=\"container\"", self.html)
+        self.assertGreaterEqual(self.html.count("class=\"endpoint\""), 3)
+
+    def test_external_links(self) -> None:
+        self.assertIn("href=\"http://localhost:3000\"", self.html)
+        self.assertIn("Grafana Dashboard", self.html)
+
+    def test_content_size_is_reasonable(self) -> None:
+        self.assertLess(len(self.html), 10000)
+
+    def test_accessibility_structure(self) -> None:
+        h1_tags = re.findall(r"<h1[\\s>].*?</h1>", self.html)
+        h2_tags = re.findall(r"<h2[\\s>].*?</h2>", self.html)
+        self.assertEqual(len(h1_tags), 1)
+        self.assertGreaterEqual(len(h2_tags), 2)
+
+    def test_images_have_alt_text_if_present(self) -> None:
+        images = re.findall(r"<img[^>]*>", self.html)
+        for image in images:
+            if "alt=" in image:
+                alt_value = re.search(r"alt=\"([^\"]*)\"", image)
+                self.assertIsNotNone(alt_value)
+                self.assertTrue(alt_value.group(1))
+
+    def test_api_endpoint_descriptions(self) -> None:
+        self.assertIn("Get latest market quotes", self.html)
+        self.assertIn("Get technical indicators (EMA, RSI)", self.html)
+        self.assertIn("Health check endpoint", self.html)

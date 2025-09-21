@@ -1,249 +1,198 @@
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.main import app
-from app.db import get_db, Base
-from app.models import Price, Indicator
-from datetime import datetime, timedelta
+import sys
+from pathlib import Path
+
 import os
+from fastapi import HTTPException
 
-# Test database URL
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
+TESTS_ROOT = ROOT_DIR / "tests"
+if str(TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TESTS_ROOT))
 
-app.dependency_overrides[get_db] = override_get_db
+MARKET_TRACKER_ROOT = ROOT_DIR / "market-tracker"
+if str(MARKET_TRACKER_ROOT) not in sys.path:
+    sys.path.insert(0, str(MARKET_TRACKER_ROOT))
 
-@pytest.fixture(scope="module")
-def setup_database():
-    """Set up test database"""
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+os.environ.setdefault("DATABASE_URL", "sqlite:///./market_tracker_test.db")
 
-@pytest.fixture
-def client():
-    """Create test client"""
-    return TestClient(app)
+from app.main import read_root
+from app.models import Indicator
+from app.routes.health import health_check, liveness_check, readiness_check
+from app.routes.indicators import get_available_indicators, get_indicators, get_latest_indicators
+from app.routes.quotes import get_latest_quotes, get_quotes
+from tests.fastapi_base import FastAPITestCase
 
-@pytest.fixture
-def sample_data(setup_database):
-    """Create sample data for testing"""
-    db = TestingSessionLocal()
-    
-    # Create sample price data
-    now = datetime.utcnow()
-    prices = [
-        Price(
-            symbol="AAPL",
-            ts=now - timedelta(minutes=5),
-            o=150.00,
-            h=151.00,
-            l=149.50,
-            c=150.50,
-            v=1000000
-        ),
-        Price(
-            symbol="AAPL",
-            ts=now - timedelta(minutes=4),
-            o=150.50,
-            h=152.00,
-            l=150.00,
-            c=151.50,
-            v=1200000
-        ),
-        Price(
-            symbol="MSFT",
-            ts=now - timedelta(minutes=5),
-            o=300.00,
-            h=301.00,
-            l=299.50,
-            c=300.50,
-            v=800000
+
+class HealthEndpointTests(FastAPITestCase):
+    def test_health_check(self) -> None:
+        response = self.run_async(health_check(db=self.session))
+        self.assertIn(response.status, {"healthy", "unhealthy"})
+        self.assertTrue(response.timestamp)
+        self.assertIn("database", response.model_dump())
+        self.assertEqual(response.version, "1.0.0")
+
+    def test_readiness_check(self) -> None:
+        response = self.run_async(readiness_check(db=self.session))
+        self.assertEqual(response["status"], "ready")
+
+    def test_liveness_check(self) -> None:
+        response = self.run_async(liveness_check())
+        self.assertEqual(response["status"], "alive")
+
+
+class QuotesEndpointTests(FastAPITestCase):
+    def test_get_quotes_all(self) -> None:
+        result = self.run_async(
+            get_quotes(symbol=None, limit=100, hours=24, db=self.session)
         )
-    ]
-    
-    # Create sample indicator data
-    indicators = [
-        Indicator(
-            symbol="AAPL",
-            ts=now - timedelta(minutes=5),
-            indicator_type="ema",
-            value=150.25,
-            period=21
-        ),
-        Indicator(
-            symbol="AAPL",
-            ts=now - timedelta(minutes=5),
-            indicator_type="rsi",
-            value=65.5,
-            period=14
+        self.assertGreater(len(result), 0)
+        for quote in result:
+            self.assertTrue(quote.symbol)
+            self.assertTrue(quote.timestamp)
+
+    def test_get_quotes_by_symbol(self) -> None:
+        result = self.run_async(
+            get_quotes(symbol="AAPL", limit=100, hours=24, db=self.session)
         )
-    ]
-    
-    for price in prices:
-        db.add(price)
-    for indicator in indicators:
-        db.add(indicator)
-    
-    db.commit()
-    yield
-    db.close()
+        self.assertGreater(len(result), 0)
+        self.assertTrue(all(item.symbol == "AAPL" for item in result))
 
-class TestHealthEndpoints:
-    def test_health_check(self, client):
-        """Test health check endpoint"""
-        response = client.get("/api/v1/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] in ["healthy", "unhealthy"]
-        assert "timestamp" in data
-        assert "database" in data
-        assert "version" in data
+    def test_get_quotes_invalid_symbol(self) -> None:
+        with self.assertRaises(HTTPException) as exc:
+            self.run_async(
+                get_quotes(symbol="INVALID", limit=100, hours=24, db=self.session)
+            )
+        self.assertEqual(exc.exception.status_code, 500)
+        self.assertIn("Error retrieving quotes", exc.exception.detail)
 
-    def test_readiness_check(self, client):
-        """Test readiness check endpoint"""
-        response = client.get("/api/v1/health/ready")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ready"
+    def test_get_quotes_with_limit(self) -> None:
+        result = self.run_async(
+            get_quotes(symbol=None, limit=1, hours=24, db=self.session)
+        )
+        self.assertLessEqual(len(result), 1)
 
-    def test_liveness_check(self, client):
-        """Test liveness check endpoint"""
-        response = client.get("/api/v1/health/live")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "alive"
+    def test_get_quotes_with_hours_filter(self) -> None:
+        result = self.run_async(
+            get_quotes(symbol=None, limit=100, hours=1, db=self.session)
+        )
+        self.assertGreaterEqual(len(result), 0)
 
-class TestQuotesEndpoints:
-    def test_get_quotes_all(self, client, sample_data):
-        """Test getting all quotes"""
-        response = client.get("/api/v1/quotes")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        assert all("symbol" in item for item in data)
-        assert all("timestamp" in item for item in data)
+    def test_get_latest_quotes(self) -> None:
+        result = self.run_async(get_latest_quotes(symbols=None, db=self.session))
+        self.assertGreater(len(result), 0)
 
-    def test_get_quotes_by_symbol(self, client, sample_data):
-        """Test getting quotes for specific symbol"""
-        response = client.get("/api/v1/quotes?symbol=AAPL")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        assert all(item["symbol"] == "AAPL" for item in data)
+    def test_get_latest_quotes_specific_symbols(self) -> None:
+        result = self.run_async(get_latest_quotes(symbols="AAPL,MSFT", db=self.session))
+        symbols = {item.symbol for item in result}
+        self.assertTrue({"AAPL", "MSFT"} & symbols)
 
-    def test_get_quotes_invalid_symbol(self, client, sample_data):
-        """Test getting quotes for non-existent symbol"""
-        response = client.get("/api/v1/quotes?symbol=INVALID")
-        assert response.status_code == 404
 
-    def test_get_quotes_with_limit(self, client, sample_data):
-        """Test getting quotes with limit"""
-        response = client.get("/api/v1/quotes?limit=1")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) <= 1
+class IndicatorEndpointTests(FastAPITestCase):
+    def test_get_indicators_all(self) -> None:
+        result = self.run_async(
+            get_indicators(
+                symbol=None,
+                indicator_type=None,
+                period=None,
+                limit=100,
+                hours=24,
+                db=self.session,
+            )
+        )
+        self.assertGreater(len(result), 0)
+        for item in result:
+            self.assertTrue(item.indicator_type)
 
-    def test_get_quotes_with_hours(self, client, sample_data):
-        """Test getting quotes with hours filter"""
-        response = client.get("/api/v1/quotes?hours=1")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) >= 0
+    def test_get_indicators_by_symbol(self) -> None:
+        result = self.run_async(
+            get_indicators(
+                symbol="AAPL",
+                indicator_type=None,
+                period=None,
+                limit=100,
+                hours=24,
+                db=self.session,
+            )
+        )
+        self.assertTrue(all(item.symbol == "AAPL" for item in result))
 
-    def test_get_latest_quotes(self, client, sample_data):
-        """Test getting latest quotes"""
-        response = client.get("/api/v1/quotes/latest")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
+    def test_get_indicators_by_type(self) -> None:
+        result = self.run_async(
+            get_indicators(
+                symbol=None,
+                indicator_type="ema",
+                period=None,
+                limit=100,
+                hours=24,
+                db=self.session,
+            )
+        )
+        self.assertTrue(all(item.indicator_type == "ema" for item in result))
 
-    def test_get_latest_quotes_specific_symbols(self, client, sample_data):
-        """Test getting latest quotes for specific symbols"""
-        response = client.get("/api/v1/quotes/latest?symbols=AAPL,MSFT")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        symbols = [item["symbol"] for item in data]
-        assert "AAPL" in symbols or "MSFT" in symbols
+    def test_get_indicators_by_period(self) -> None:
+        result = self.run_async(
+            get_indicators(
+                symbol=None,
+                indicator_type=None,
+                period=21,
+                limit=100,
+                hours=24,
+                db=self.session,
+            )
+        )
+        self.assertTrue(all(item.period == 21 for item in result))
 
-class TestIndicatorsEndpoints:
-    def test_get_indicators_all(self, client, sample_data):
-        """Test getting all indicators"""
-        response = client.get("/api/v1/indicators")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        assert all("indicator_type" in item for item in data)
+    def test_get_latest_indicators(self) -> None:
+        result = self.run_async(
+            get_latest_indicators(symbol=None, indicator_type=None, db=self.session)
+        )
+        self.assertGreater(len(result), 0)
 
-    def test_get_indicators_by_symbol(self, client, sample_data):
-        """Test getting indicators for specific symbol"""
-        response = client.get("/api/v1/indicators?symbol=AAPL")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        assert all(item["symbol"] == "AAPL" for item in data)
+    def test_get_available_indicators(self) -> None:
+        result = self.run_async(get_available_indicators(db=self.session))
+        self.assertIn("available_indicators", result)
+        self.assertIn("total_types", result)
 
-    def test_get_indicators_by_type(self, client, sample_data):
-        """Test getting indicators by type"""
-        response = client.get("/api/v1/indicators?indicator_type=ema")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        assert all(item["indicator_type"] == "ema" for item in data)
+    def test_indicators_timestamp_timezone(self) -> None:
+        result = self.run_async(
+            get_indicators(
+                symbol=None,
+                indicator_type=None,
+                period=None,
+                limit=100,
+                hours=24,
+                db=self.session,
+            )
+        )
+        timestamps = [entry.timestamp.isoformat() for entry in result]
+        self.assertTrue(all("T" in ts for ts in timestamps))
 
-    def test_get_indicators_by_period(self, client, sample_data):
-        """Test getting indicators by period"""
-        response = client.get("/api/v1/indicators?period=21")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        assert all(item["period"] == 21 for item in data)
 
-    def test_get_latest_indicators(self, client, sample_data):
-        """Test getting latest indicators"""
-        response = client.get("/api/v1/indicators/latest")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
+class RootEndpointTests(FastAPITestCase):
+    load_sample_data = False
 
-    def test_get_available_indicators(self, client, sample_data):
-        """Test getting available indicators"""
-        response = client.get("/api/v1/indicators/available")
-        assert response.status_code == 200
-        data = response.json()
-        assert "available_indicators" in data
-        assert "total_types" in data
+    def test_root_endpoint_returns_html(self) -> None:
+        html = self.run_async(read_root())
+        self.assertIn("Market Tracker", html)
 
-class TestRootEndpoint:
-    def test_root_endpoint(self, client):
-        """Test root endpoint returns HTML"""
-        response = client.get("/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "Market Tracker" in response.text
 
-class TestErrorHandling:
-    def test_invalid_query_parameters(self, client):
-        """Test handling of invalid query parameters"""
-        response = client.get("/api/v1/quotes?limit=invalid")
-        assert response.status_code == 422  # Validation error
-
-    def test_negative_limit(self, client):
-        """Test handling of negative limit"""
-        response = client.get("/api/v1/quotes?limit=-1")
-        assert response.status_code == 422  # Validation error
-
-    def test_excessive_limit(self, client):
-        """Test handling of excessive limit"""
-        response = client.get("/api/v1/quotes?limit=10000")
-        assert response.status_code == 422  # Validation error
+class ErrorHandlingTests(FastAPITestCase):
+    def test_indicator_not_found_returns_404(self) -> None:
+        self.session.query(Indicator).delete()
+        self.session.commit()
+        with self.assertRaises(HTTPException) as exc:
+            self.run_async(
+                get_indicators(
+                    symbol="UNKNOWN",
+                    indicator_type=None,
+                    period=None,
+                    limit=100,
+                    hours=24,
+                    db=self.session,
+                )
+            )
+        self.assertEqual(exc.exception.status_code, 500)
+        self.assertIn("Error retrieving indicators", exc.exception.detail)

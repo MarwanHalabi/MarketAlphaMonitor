@@ -15,6 +15,10 @@ class HealthResponse(BaseModel):
     version: str
     uptime: str
 
+    def model_dump(self, *args, **kwargs):
+        """Compatibility shim for Pydantic v1."""
+        return self.dict(*args, **kwargs)
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check(db: Session = Depends(get_db)):
     """

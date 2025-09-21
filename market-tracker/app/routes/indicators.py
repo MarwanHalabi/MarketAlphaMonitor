@@ -19,6 +19,10 @@ class IndicatorResponse(BaseModel):
     class Config:
         from_attributes = True
 
+    def model_dump(self, *args, **kwargs):
+        """Compatibility shim so callers can rely on the Pydantic v2 API."""
+        return self.dict(*args, **kwargs)
+
 @router.get("/indicators", response_model=List[IndicatorResponse])
 async def get_indicators(
     symbol: Optional[str] = Query(None, description="Stock symbol (e.g., AAPL)"),

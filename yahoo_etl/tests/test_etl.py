@@ -1,307 +1,271 @@
-import pytest
-import pandas as pd
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, MagicMock
-from etl import YahooETL
-import os
+from __future__ import annotations
 
-class TestYahooETL:
-    @pytest.fixture
-    def etl(self):
-        """Create ETL instance for testing"""
-        return YahooETL("sqlite:///./test.db")
-    
-    @pytest.fixture
-    def sample_price_data(self):
-        """Create sample price data for testing"""
-        now = datetime.utcnow()
-        data = {
-            'Datetime': [now - timedelta(minutes=5), now - timedelta(minutes=4)],
-            'Open': [150.00, 150.50],
-            'High': [151.00, 152.00],
-            'Low': [149.50, 150.00],
-            'Close': [150.50, 151.50],
-            'Volume': [1000000, 1200000]
-        }
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from contextlib import ExitStack
+from unittest import TestCase, skipIf
+from unittest.mock import Mock, patch
+
+try:
+    import pandas as pd
+except ModuleNotFoundError:  # pragma: no cover - handled during tests
+    pd = None
+
+if pd is not None:
+    from yahoo_etl.etl import YahooETL
+else:  # pragma: no cover - executed when pandas is unavailable
+    YahooETL = None
+
+
+@skipIf(YahooETL is None, "pandas is required for YahooETL tests")
+class YahooETLTestCase(TestCase):
+    database_url = "sqlite:///./yahoo_etl_test.db"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        db_path = Path(cls.database_url.replace("sqlite:///", ""))
+        if db_path.exists():
+            db_path.unlink()
+        super().tearDownClass()
+
+    def setUp(self) -> None:
+        db_path = Path(self.database_url.replace("sqlite:///", ""))
+        if db_path.exists():
+            db_path.unlink()
+        self.etl = YahooETL(self.database_url)
+        self.etl.symbols = ["AAPL", "MSFT"]
+
+    def tearDown(self) -> None:
+        self.etl.engine.dispose()
+        super().tearDown()
+
+    @staticmethod
+    def yahoo_history_frame() -> pd.DataFrame:
+        now = datetime.now(timezone.utc)
+        return pd.DataFrame(
+            {
+                "Datetime": [now - timedelta(minutes=5), now - timedelta(minutes=4)],
+                "Open": [150.0, 150.5],
+                "High": [151.0, 152.0],
+                "Low": [149.5, 150.0],
+                "Close": [150.5, 151.5],
+                "Volume": [1_000_000, 1_200_000],
+            }
+        )
+
+    @staticmethod
+    def processed_price_frame(rows: int = 2) -> pd.DataFrame:
+        now = datetime.now(timezone.utc)
+        data = []
+        for idx in range(rows):
+            data.append(
+                {
+                    "symbol": "AAPL",
+                    "ts": now - timedelta(minutes=rows - idx),
+                    "o": 150.0 + idx * 0.5,
+                    "h": 151.0 + idx * 0.5,
+                    "l": 149.5 + idx * 0.5,
+                    "c": 150.5 + idx * 0.5,
+                    "v": 1_000_000 + idx * 100_000,
+                }
+            )
         return pd.DataFrame(data)
-    
-    @pytest.fixture
-    def sample_processed_data(self):
-        """Create sample processed data for testing"""
-        now = datetime.utcnow()
-        data = {
-            'symbol': ['AAPL', 'AAPL'],
-            'ts': [now - timedelta(minutes=5), now - timedelta(minutes=4)],
-            'o': [150.00, 150.50],
-            'h': [151.00, 152.00],
-            'l': [149.50, 150.00],
-            'c': [150.50, 151.50],
-            'v': [1000000, 1200000]
-        }
-        return pd.DataFrame(data)
 
-    @patch('yfinance.Ticker')
-    def test_fetch_data_success(self, mock_ticker, etl, sample_price_data):
-        """Test successful data fetching"""
-        # Mock the ticker and its history method
-        mock_ticker_instance = Mock()
-        mock_ticker_instance.history.return_value = sample_price_data
-        mock_ticker.return_value = mock_ticker_instance
-        
-        result = etl.fetch_data("AAPL")
-        
-        assert not result.empty
-        assert "symbol" in result.columns
-        assert "ts" in result.columns
-        assert "o" in result.columns
-        assert "h" in result.columns
-        assert "l" in result.columns
-        assert "c" in result.columns
-        assert "v" in result.columns
-        assert result["symbol"].iloc[0] == "AAPL"
-        
-        # Verify yfinance was called correctly
-        mock_ticker.assert_called_once_with("AAPL")
-        mock_ticker_instance.history.assert_called_once_with(period="1d", interval="1m")
+    def test_fetch_data_success(self) -> None:
+        with patch("yahoo_etl.etl.yf.Ticker") as mock_ticker:
+            ticker_instance = Mock()
+            ticker_instance.history.return_value = self.yahoo_history_frame()
+            mock_ticker.return_value = ticker_instance
 
-    @patch('yfinance.Ticker')
-    def test_fetch_data_empty(self, mock_ticker, etl):
-        """Test data fetching when no data is available"""
-        # Mock empty data
-        mock_ticker_instance = Mock()
-        mock_ticker_instance.history.return_value = pd.DataFrame()
-        mock_ticker.return_value = mock_ticker_instance
-        
-        result = etl.fetch_data("INVALID")
-        
-        assert result.empty
+            result = self.etl.fetch_data("AAPL")
 
-    @patch('yfinance.Ticker')
-    def test_fetch_data_exception(self, mock_ticker, etl):
-        """Test data fetching when exception occurs"""
-        # Mock exception
-        mock_ticker.side_effect = Exception("Network error")
-        
-        result = etl.fetch_data("AAPL")
-        
-        assert result.empty
+            self.assertFalse(result.empty)
+            self.assertTrue({"symbol", "ts", "o", "h", "l", "c", "v"}.issubset(result.columns))
+            self.assertEqual(result["symbol"].iloc[0], "AAPL")
+            mock_ticker.assert_called_once_with("AAPL")
+            ticker_instance.history.assert_called_once_with(period="1d", interval="1m")
 
-    def test_calculate_indicators_ema(self, etl, sample_processed_data):
-        """Test EMA calculation"""
-        result = etl.calculate_indicators("AAPL", sample_processed_data)
-        
-        assert not result.empty
-        assert "indicator_type" in result.columns
-        assert "value" in result.columns
-        assert "period" in result.columns
-        
-        # Check for EMA indicators
-        ema_indicators = result[result["indicator_type"] == "ema"]
-        assert not ema_indicators.empty
-        assert set(ema_indicators["period"].unique()) == {9, 21, 50}
+    def test_fetch_data_empty(self) -> None:
+        with patch("yahoo_etl.etl.yf.Ticker") as mock_ticker:
+            ticker_instance = Mock()
+            ticker_instance.history.return_value = pd.DataFrame()
+            mock_ticker.return_value = ticker_instance
 
-    def test_calculate_indicators_rsi(self, etl, sample_processed_data):
-        """Test RSI calculation"""
-        # Create more data points for RSI calculation
-        now = datetime.utcnow()
-        extended_data = []
-        for i in range(20):
-            extended_data.append({
-                'symbol': 'AAPL',
-                'ts': now - timedelta(minutes=20-i),
-                'o': 150.0 + i * 0.1,
-                'h': 151.0 + i * 0.1,
-                'l': 149.0 + i * 0.1,
-                'c': 150.0 + i * 0.1,
-                'v': 1000000
-            })
-        
-        extended_df = pd.DataFrame(extended_data)
-        result = etl.calculate_indicators("AAPL", extended_df)
-        
-        # Check for RSI indicators
-        rsi_indicators = result[result["indicator_type"] == "rsi"]
-        assert not rsi_indicators.empty
-        assert all(rsi_indicators["period"] == 14)
+            result = self.etl.fetch_data("INVALID")
+            self.assertTrue(result.empty)
 
-    def test_calculate_indicators_insufficient_data(self, etl):
-        """Test indicator calculation with insufficient data"""
-        # Create minimal data
-        now = datetime.utcnow()
-        minimal_data = pd.DataFrame({
-            'symbol': ['AAPL'],
-            'ts': [now],
-            'o': [150.0],
-            'h': [151.0],
-            'l': [149.0],
-            'c': [150.0],
-            'v': [1000000]
-        })
-        
-        result = etl.calculate_indicators("AAPL", minimal_data)
-        
-        assert result.empty
+    def test_fetch_data_exception(self) -> None:
+        with patch("yahoo_etl.etl.yf.Ticker", side_effect=Exception("Network error")):
+            result = self.etl.fetch_data("AAPL")
+            self.assertTrue(result.empty)
 
-    def test_calculate_rsi_method(self, etl):
-        """Test RSI calculation method directly"""
-        # Create sample price series
-        prices = pd.Series([100, 102, 101, 103, 105, 104, 106, 108, 107, 109, 111, 110, 112, 114, 113, 115])
-        
-        rsi = etl._calculate_rsi(prices, 14)
-        
-        assert len(rsi) == len(prices)
-        assert not rsi.isna().all()  # Should have some valid RSI values
-        assert all(0 <= val <= 100 for val in rsi.dropna())  # RSI should be between 0 and 100
+    def test_calculate_indicators_ema(self) -> None:
+        data = self.processed_price_frame(rows=60)
+        result = self.etl.calculate_indicators("AAPL", data)
+        ema = result[result["indicator_type"] == "ema"]
+        self.assertFalse(ema.empty)
+        self.assertTrue(set(ema["period"].unique()).issuperset({9, 21, 50}))
 
-    @patch('etl.YahooETL.Session')
-    def test_upsert_prices_success(self, mock_session, etl, sample_processed_data):
-        """Test successful price upsert"""
-        # Mock database session
-        mock_db = Mock()
-        mock_session.return_value.__enter__.return_value = mock_db
-        mock_session.return_value.__exit__.return_value = None
-        
-        result = etl.upsert_prices(sample_processed_data)
-        
-        assert result == len(sample_processed_data)
-        mock_db.execute.assert_called_once()
-        mock_db.commit.assert_called_once()
+    def test_calculate_indicators_rsi(self) -> None:
+        rows = []
+        now = datetime.now(timezone.utc)
+        for index in range(20):
+            rows.append(
+                {
+                    "symbol": "AAPL",
+                    "ts": now - timedelta(minutes=20 - index),
+                    "o": 150.0 + index,
+                    "h": 151.0 + index,
+                    "l": 149.0 + index,
+                    "c": 150.0 + index,
+                    "v": 1_000_000,
+                }
+            )
+        data = pd.DataFrame(rows)
+        result = self.etl.calculate_indicators("AAPL", data)
+        rsi = result[result["indicator_type"] == "rsi"]
+        self.assertFalse(rsi.empty)
+        self.assertTrue((rsi["period"] == 14).all())
 
-    @patch('etl.YahooETL.Session')
-    def test_upsert_prices_exception(self, mock_session, etl, sample_processed_data):
-        """Test price upsert with exception"""
-        # Mock database session with exception
-        mock_db = Mock()
-        mock_db.execute.side_effect = Exception("Database error")
-        mock_session.return_value.__enter__.return_value = mock_db
-        mock_session.return_value.__exit__.return_value = None
-        
-        result = etl.upsert_prices(sample_processed_data)
-        
-        assert result == 0
+    def test_calculate_indicators_insufficient_data(self) -> None:
+        data = self.processed_price_frame(rows=1)
+        result = self.etl.calculate_indicators("AAPL", data)
+        self.assertTrue(result.empty)
 
-    def test_upsert_prices_empty_data(self, etl):
-        """Test price upsert with empty data"""
-        empty_df = pd.DataFrame()
-        result = etl.upsert_prices(empty_df)
-        
-        assert result == 0
+    def test_calculate_rsi_method(self) -> None:
+        series = pd.Series([100, 102, 101, 103, 105, 104, 106, 108, 107, 109, 111, 110, 112, 114, 113, 115])
+        rsi = self.etl._calculate_rsi(series, 14)
+        self.assertEqual(len(rsi), len(series))
+        self.assertFalse(rsi.isna().all())
+        self.assertTrue(((rsi.dropna() >= 0) & (rsi.dropna() <= 100)).all())
 
-    @patch('etl.YahooETL.Session')
-    def test_upsert_indicators_success(self, mock_session, etl):
-        """Test successful indicator upsert"""
-        # Create sample indicator data
-        now = datetime.utcnow()
-        indicator_data = pd.DataFrame({
-            'symbol': ['AAPL', 'AAPL'],
-            'ts': [now, now - timedelta(minutes=1)],
-            'indicator_type': ['ema', 'rsi'],
-            'value': [150.25, 65.5],
-            'period': [21, 14]
-        })
-        
-        # Mock database session
-        mock_db = Mock()
-        mock_session.return_value.__enter__.return_value = mock_db
-        mock_session.return_value.__exit__.return_value = None
-        
-        result = etl.upsert_indicators(indicator_data)
-        
-        assert result == len(indicator_data)
-        mock_db.execute.assert_called_once()
-        mock_db.commit.assert_called_once()
+    def test_upsert_prices_success(self) -> None:
+        with patch("yahoo_etl.etl.YahooETL.Session") as mock_session:
+            mock_db = Mock()
+            mock_session.return_value.__enter__.return_value = mock_db
+            mock_session.return_value.__exit__.return_value = None
 
-    @patch('etl.YahooETL.Session')
-    def test_upsert_indicators_exception(self, mock_session, etl):
-        """Test indicator upsert with exception"""
-        # Create sample indicator data
-        now = datetime.utcnow()
-        indicator_data = pd.DataFrame({
-            'symbol': ['AAPL'],
-            'ts': [now],
-            'indicator_type': ['ema'],
-            'value': [150.25],
-            'period': [21]
-        })
-        
-        # Mock database session with exception
-        mock_db = Mock()
-        mock_db.execute.side_effect = Exception("Database error")
-        mock_session.return_value.__enter__.return_value = mock_db
-        mock_session.return_value.__exit__.return_value = None
-        
-        result = etl.upsert_indicators(indicator_data)
-        
-        assert result == 0
+            count = self.etl.upsert_prices(self.processed_price_frame())
+            self.assertEqual(count, 2)
+            mock_db.execute.assert_called_once()
+            mock_db.commit.assert_called_once()
 
-    @patch('etl.YahooETL.fetch_data')
-    @patch('etl.YahooETL.upsert_prices')
-    @patch('etl.YahooETL.calculate_indicators')
-    @patch('etl.YahooETL.upsert_indicators')
-    def test_process_symbol_success(self, mock_upsert_indicators, mock_calculate_indicators, 
-                                   mock_upsert_prices, mock_fetch_data, etl, sample_processed_data):
-        """Test successful symbol processing"""
-        # Mock all methods
-        mock_fetch_data.return_value = sample_processed_data
-        mock_upsert_prices.return_value = len(sample_processed_data)
-        mock_calculate_indicators.return_value = pd.DataFrame({
-            'symbol': ['AAPL'],
-            'ts': [datetime.utcnow()],
-            'indicator_type': ['ema'],
-            'value': [150.25],
-            'period': [21]
-        })
-        mock_upsert_indicators.return_value = 1
-        
-        result = etl.process_symbol("AAPL")
-        
-        assert result["prices"] == len(sample_processed_data)
-        assert result["indicators"] == 1
-        mock_fetch_data.assert_called_once_with("AAPL", "1d", "1m")
-        mock_upsert_prices.assert_called_once()
-        mock_calculate_indicators.assert_called_once()
-        mock_upsert_indicators.assert_called_once()
+    def test_upsert_prices_exception(self) -> None:
+        with patch("yahoo_etl.etl.YahooETL.Session") as mock_session:
+            mock_db = Mock()
+            mock_db.execute.side_effect = Exception("Database error")
+            mock_session.return_value.__enter__.return_value = mock_db
+            mock_session.return_value.__exit__.return_value = None
 
-    @patch('etl.YahooETL.fetch_data')
-    def test_process_symbol_empty_data(self, mock_fetch_data, etl):
-        """Test symbol processing with empty data"""
-        mock_fetch_data.return_value = pd.DataFrame()
-        
-        result = etl.process_symbol("INVALID")
-        
-        assert result["prices"] == 0
-        assert result["indicators"] == 0
+            count = self.etl.upsert_prices(self.processed_price_frame())
+            self.assertEqual(count, 0)
 
-    @patch('etl.YahooETL.process_symbol')
-    def test_process_all_symbols_success(self, mock_process_symbol, etl):
-        """Test processing all symbols successfully"""
-        # Mock process_symbol to return success
-        mock_process_symbol.return_value = {"prices": 10, "indicators": 5}
-        
-        result = etl.process_all_symbols()
-        
-        assert result["total_symbols"] == len(etl.symbols)
-        assert result["successful"] == len(etl.symbols)
-        assert result["failed"] == 0
-        assert result["total_prices"] == len(etl.symbols) * 10
-        assert result["total_indicators"] == len(etl.symbols) * 5
+    def test_upsert_prices_empty_data(self) -> None:
+        self.assertEqual(self.etl.upsert_prices(pd.DataFrame()), 0)
 
-    @patch('etl.YahooETL.process_symbol')
-    def test_process_all_symbols_with_failures(self, mock_process_symbol, etl):
-        """Test processing all symbols with some failures"""
-        # Mock process_symbol to raise exception for some symbols
-        def side_effect(symbol):
+    def test_upsert_indicators_success(self) -> None:
+        with patch("yahoo_etl.etl.YahooETL.Session") as mock_session:
+            mock_db = Mock()
+            mock_session.return_value.__enter__.return_value = mock_db
+            mock_session.return_value.__exit__.return_value = None
+
+            now = datetime.now(timezone.utc)
+            indicators = pd.DataFrame(
+                {
+                    "symbol": ["AAPL", "AAPL"],
+                    "ts": [now, now - timedelta(minutes=1)],
+                    "indicator_type": ["ema", "rsi"],
+                    "value": [150.25, 65.5],
+                    "period": [21, 14],
+                }
+            )
+
+            count = self.etl.upsert_indicators(indicators)
+            self.assertEqual(count, 2)
+            mock_db.execute.assert_called_once()
+            mock_db.commit.assert_called_once()
+
+    def test_upsert_indicators_exception(self) -> None:
+        with patch("yahoo_etl.etl.YahooETL.Session") as mock_session:
+            mock_db = Mock()
+            mock_db.execute.side_effect = Exception("Database error")
+            mock_session.return_value.__enter__.return_value = mock_db
+            mock_session.return_value.__exit__.return_value = None
+
+            now = datetime.now(timezone.utc)
+            indicators = pd.DataFrame(
+                {
+                    "symbol": ["AAPL"],
+                    "ts": [now],
+                    "indicator_type": ["ema"],
+                    "value": [150.25],
+                    "period": [21],
+                }
+            )
+
+            self.assertEqual(self.etl.upsert_indicators(indicators), 0)
+
+    def test_process_symbol_success(self) -> None:
+        with ExitStack() as stack:
+            mock_fetch = stack.enter_context(
+                patch("yahoo_etl.etl.YahooETL.fetch_data", return_value=self.processed_price_frame())
+            )
+            mock_upsert_prices = stack.enter_context(
+                patch("yahoo_etl.etl.YahooETL.upsert_prices", return_value=2)
+            )
+            mock_calculate = stack.enter_context(
+                patch(
+                    "yahoo_etl.etl.YahooETL.calculate_indicators",
+                    return_value=pd.DataFrame(
+                        {
+                            "symbol": ["AAPL"],
+                            "ts": [datetime.now(timezone.utc)],
+                            "indicator_type": ["ema"],
+                            "value": [150.25],
+                            "period": [21],
+                        }
+                    ),
+                )
+            )
+            mock_upsert_indicators = stack.enter_context(
+                patch("yahoo_etl.etl.YahooETL.upsert_indicators", return_value=1)
+            )
+
+            result = self.etl.process_symbol("AAPL")
+            self.assertEqual(result, {"prices": 2, "indicators": 1})
+            mock_fetch.assert_called_once_with("AAPL", "1d", "1m")
+            mock_upsert_prices.assert_called_once()
+            mock_calculate.assert_called_once()
+            mock_upsert_indicators.assert_called_once()
+
+    def test_process_symbol_empty_data(self) -> None:
+        with patch("yahoo_etl.etl.YahooETL.fetch_data", return_value=pd.DataFrame()):
+            result = self.etl.process_symbol("INVALID")
+            self.assertEqual(result, {"prices": 0, "indicators": 0})
+
+    @patch("yahoo_etl.etl.time.sleep", return_value=None)
+    def test_process_all_symbols_success(self, _mock_sleep) -> None:
+        with patch("yahoo_etl.etl.YahooETL.process_symbol", return_value={"prices": 10, "indicators": 5}):
+            result = self.etl.process_all_symbols()
+            self.assertEqual(result["total_symbols"], len(self.etl.symbols))
+            self.assertEqual(result["successful"], len(self.etl.symbols))
+            self.assertEqual(result["failed"], 0)
+            self.assertEqual(result["total_prices"], len(self.etl.symbols) * 10)
+            self.assertEqual(result["total_indicators"], len(self.etl.symbols) * 5)
+
+    @patch("yahoo_etl.etl.time.sleep", return_value=None)
+    def test_process_all_symbols_with_failures(self, _mock_sleep) -> None:
+        def side_effect(symbol: str):
             if symbol == "INVALID":
                 raise Exception("Symbol not found")
             return {"prices": 10, "indicators": 5}
-        
-        mock_process_symbol.side_effect = side_effect
-        etl.symbols = ["AAPL", "MSFT", "INVALID"]  # Override symbols for testing
-        
-        result = etl.process_all_symbols()
-        
-        assert result["total_symbols"] == 3
-        assert result["successful"] == 2
-        assert result["failed"] == 1
-        assert "INVALID" in result["symbols"]
-        assert "error" in result["symbols"]["INVALID"]
+
+        with patch("yahoo_etl.etl.YahooETL.process_symbol", side_effect=side_effect):
+            self.etl.symbols = ["AAPL", "MSFT", "INVALID"]
+            result = self.etl.process_all_symbols()
+            self.assertEqual(result["total_symbols"], 3)
+            self.assertEqual(result["successful"], 2)
+            self.assertEqual(result["failed"], 1)
+            self.assertIn("INVALID", result["symbols"])
+            self.assertIn("error", result["symbols"]["INVALID"])

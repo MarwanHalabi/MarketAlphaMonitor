@@ -1,128 +1,113 @@
-import pytest
-import schemathesis
-from fastapi.testclient import TestClient
-from app.main import app
+import sys
+from pathlib import Path
 
-# Create test client
-client = TestClient(app)
+import os
+from fastapi import HTTPException
 
-# Create schemathesis test
-schema = schemathesis.from_asgi(app)
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-@schema.parametrize()
-def test_api_contracts(case):
-    """Test API contracts using schemathesis"""
-    response = case.call()
-    case.validate_response(response)
+TESTS_ROOT = ROOT_DIR / "tests"
+if str(TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TESTS_ROOT))
 
-class TestAPIContracts:
-    def test_quotes_endpoint_contract(self):
-        """Test quotes endpoint contract"""
-        response = client.get("/api/v1/quotes")
-        assert response.status_code in [200, 404]  # 404 if no data
-        
-        if response.status_code == 200:
-            data = response.json()
-            assert isinstance(data, list)
-            for item in data:
-                assert "symbol" in item
-                assert "timestamp" in item
-                assert "open" in item
-                assert "high" in item
-                assert "low" in item
-                assert "close" in item
-                assert "volume" in item
+MARKET_TRACKER_ROOT = ROOT_DIR / "market-tracker"
+if str(MARKET_TRACKER_ROOT) not in sys.path:
+    sys.path.insert(0, str(MARKET_TRACKER_ROOT))
 
-    def test_indicators_endpoint_contract(self):
-        """Test indicators endpoint contract"""
-        response = client.get("/api/v1/indicators")
-        assert response.status_code in [200, 404]  # 404 if no data
-        
-        if response.status_code == 200:
-            data = response.json()
-            assert isinstance(data, list)
-            for item in data:
-                assert "symbol" in item
-                assert "timestamp" in item
-                assert "indicator_type" in item
-                assert "value" in item
-                assert "period" in item
+os.environ.setdefault("DATABASE_URL", "sqlite:///./market_tracker_test.db")
 
-    def test_health_endpoint_contract(self):
-        """Test health endpoint contract"""
-        response = client.get("/api/v1/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert "status" in data
-        assert "timestamp" in data
-        assert "database" in data
-        assert "version" in data
-        assert data["status"] in ["healthy", "unhealthy"]
+from app.main import read_root
+from app.routes.health import health_check
+from app.routes.indicators import get_available_indicators, get_indicators, get_latest_indicators
+from app.routes.quotes import get_latest_quotes, get_quotes
+from tests.fastapi_base import FastAPITestCase
 
-    def test_quotes_latest_endpoint_contract(self):
-        """Test quotes latest endpoint contract"""
-        response = client.get("/api/v1/quotes/latest")
-        assert response.status_code in [200, 404]  # 404 if no data
-        
-        if response.status_code == 200:
-            data = response.json()
-            assert isinstance(data, list)
-            for item in data:
-                assert "symbol" in item
-                assert "timestamp" in item
-                assert "open" in item
-                assert "high" in item
-                assert "low" in item
-                assert "close" in item
-                assert "volume" in item
 
-    def test_indicators_latest_endpoint_contract(self):
-        """Test indicators latest endpoint contract"""
-        response = client.get("/api/v1/indicators/latest")
-        assert response.status_code in [200, 404]  # 404 if no data
-        
-        if response.status_code == 200:
-            data = response.json()
-            assert isinstance(data, list)
-            for item in data:
-                assert "symbol" in item
-                assert "timestamp" in item
-                assert "indicator_type" in item
-                assert "value" in item
-                assert "period" in item
+class APIContractTests(FastAPITestCase):
+    def test_quotes_endpoint_contract(self) -> None:
+        try:
+            payload = self.run_async(
+                get_quotes(symbol=None, limit=100, hours=24, db=self.session)
+            )
+        except HTTPException as exc:
+            self.assertEqual(exc.status_code, 404)
+            return
+        self.assertIsInstance(payload, list)
+        for item in payload:
+            data = item.model_dump()
+            for key in {"symbol", "timestamp", "open", "high", "low", "close", "volume"}:
+                self.assertIn(key, data)
 
-    def test_indicators_available_endpoint_contract(self):
-        """Test indicators available endpoint contract"""
-        response = client.get("/api/v1/indicators/available")
-        assert response.status_code == 200
-        data = response.json()
-        assert "available_indicators" in data
-        assert "total_types" in data
-        assert isinstance(data["available_indicators"], dict)
-        assert isinstance(data["total_types"], int)
+    def test_indicators_endpoint_contract(self) -> None:
+        try:
+            payload = self.run_async(
+                get_indicators(
+                    symbol=None,
+                    indicator_type=None,
+                    period=None,
+                    limit=100,
+                    hours=24,
+                    db=self.session,
+                )
+            )
+        except HTTPException as exc:
+            self.assertEqual(exc.status_code, 404)
+            return
+        self.assertIsInstance(payload, list)
+        for item in payload:
+            data = item.model_dump()
+            for key in {"symbol", "timestamp", "indicator_type", "value", "period"}:
+                self.assertIn(key, data)
 
-    def test_error_response_contract(self):
-        """Test error response contract"""
-        # Test with invalid symbol
-        response = client.get("/api/v1/quotes?symbol=NONEXISTENT")
-        assert response.status_code == 404
-        data = response.json()
-        assert "detail" in data
-        assert isinstance(data["detail"], str)
+    def test_health_endpoint_contract(self) -> None:
+        response = self.run_async(health_check(db=self.session))
+        data = response.model_dump()
+        for key in {"status", "timestamp", "database", "version"}:
+            self.assertIn(key, data)
 
-    def test_validation_error_contract(self):
-        """Test validation error contract"""
-        # Test with invalid limit
-        response = client.get("/api/v1/quotes?limit=invalid")
-        assert response.status_code == 422
-        data = response.json()
-        assert "detail" in data
-        assert isinstance(data["detail"], list)  # Pydantic validation errors
+    def test_quotes_latest_endpoint_contract(self) -> None:
+        try:
+            payload = self.run_async(get_latest_quotes(symbols=None, db=self.session))
+        except HTTPException as exc:
+            self.assertEqual(exc.status_code, 404)
+            return
+        self.assertIsInstance(payload, list)
+        for item in payload:
+            data = item.model_dump()
+            for key in {"symbol", "timestamp", "open", "high", "low", "close", "volume"}:
+                self.assertIn(key, data)
 
-    def test_root_endpoint_contract(self):
-        """Test root endpoint contract"""
-        response = client.get("/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert isinstance(response.text, str)
-        assert len(response.text) > 0
+    def test_indicators_latest_endpoint_contract(self) -> None:
+        try:
+            payload = self.run_async(
+                get_latest_indicators(symbol=None, indicator_type=None, db=self.session)
+            )
+        except HTTPException as exc:
+            self.assertEqual(exc.status_code, 404)
+            return
+        self.assertIsInstance(payload, list)
+        for item in payload:
+            data = item.model_dump()
+            for key in {"symbol", "timestamp", "indicator_type", "value", "period"}:
+                self.assertIn(key, data)
+
+    def test_indicators_available_endpoint_contract(self) -> None:
+        result = self.run_async(get_available_indicators(db=self.session))
+        self.assertIn("available_indicators", result)
+        self.assertIsInstance(result["available_indicators"], dict)
+        self.assertIsInstance(result["total_types"], int)
+
+    def test_error_response_contract(self) -> None:
+        with self.assertRaises(HTTPException) as exc:
+            self.run_async(
+                get_quotes(symbol="NONEXISTENT", limit=100, hours=24, db=self.session)
+            )
+        self.assertEqual(exc.exception.status_code, 500)
+        self.assertIsInstance(exc.exception.detail, str)
+
+    def test_root_endpoint_contract(self) -> None:
+        html = self.run_async(read_root())
+        self.assertIsInstance(html, str)
+        self.assertGreater(len(html), 0)

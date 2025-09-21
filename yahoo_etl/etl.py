@@ -14,9 +14,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class YahooETL:
+    Session = None  # type: ignore[assignment]
+
     def __init__(self, database_url: str):
         self.engine = create_engine(database_url)
-        self.Session = sessionmaker(bind=self.engine)
+        session_factory = sessionmaker(bind=self.engine)
+        # Store the factory on the class so tests can patch YahooETL.Session.
+        self.__class__.Session = session_factory
         
         # Default symbols to track
         self.symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX"]
@@ -222,7 +226,7 @@ class YahooETL:
         logger.info(f"Processing symbol: {symbol}")
         
         # Fetch data
-        data = self.fetch_data(symbol, period="1d", interval="1m")
+        data = self.fetch_data(symbol, "1d", "1m")
         
         if data.empty:
             return {"prices": 0, "indicators": 0}

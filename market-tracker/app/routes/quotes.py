@@ -21,6 +21,10 @@ class QuoteResponse(BaseModel):
     class Config:
         from_attributes = True
 
+    def model_dump(self, *args, **kwargs):
+        """Compatibility shim so tests can call model_dump under Pydantic v1."""
+        return self.dict(*args, **kwargs)
+
 @router.get("/quotes", response_model=List[QuoteResponse])
 async def get_quotes(
     symbol: Optional[str] = Query(None, description="Stock symbol (e.g., AAPL)"),
