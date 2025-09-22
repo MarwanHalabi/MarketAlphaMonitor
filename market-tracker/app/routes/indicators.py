@@ -31,7 +31,7 @@ async def get_indicators(
     db: Session = Depends(get_db)
 ):
     """
-    Get technical indicators (EMA, RSI, etc.) for specified symbol(s).
+    Get technical indicators (EMA, RSI, etc.) for specified symbol(s)..
     """
     try:
         # Calculate time filter
