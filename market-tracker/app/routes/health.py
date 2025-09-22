@@ -3,21 +3,18 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.db import get_db
 from pydantic import BaseModel
+from app.compat import ModelV1Compat
 from datetime import datetime
 import os
 
 router = APIRouter()
 
-class HealthResponse(BaseModel):
+class HealthResponse(ModelV1Compat):
     status: str
     timestamp: datetime
     database: str
     version: str
     uptime: str
-
-    def model_dump(self, *args, **kwargs):
-        """Compatibility shim for Pydantic v1."""
-        return self.dict(*args, **kwargs)
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(db: Session = Depends(get_db)):

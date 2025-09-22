@@ -6,10 +6,11 @@ from datetime import datetime, timedelta
 from app.db import get_db
 from app.models import Price
 from pydantic import BaseModel
+from app.compat import ModelV1Compat
 
 router = APIRouter()
 
-class QuoteResponse(BaseModel):
+class QuoteResponse(ModelV1Compat):
     symbol: str
     timestamp: datetime
     open: float
@@ -21,9 +22,6 @@ class QuoteResponse(BaseModel):
     class Config:
         from_attributes = True
 
-    def model_dump(self, *args, **kwargs):
-        """Compatibility shim so tests can call model_dump under Pydantic v1."""
-        return self.dict(*args, **kwargs)
 
 @router.get("/quotes", response_model=List[QuoteResponse])
 async def get_quotes(

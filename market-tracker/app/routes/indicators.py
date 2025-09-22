@@ -6,10 +6,11 @@ from datetime import datetime, timedelta
 from app.db import get_db
 from app.models import Indicator
 from pydantic import BaseModel
+from app.compat import ModelV1Compat
 
 router = APIRouter()
 
-class IndicatorResponse(BaseModel):
+class IndicatorResponse(ModelV1Compat):
     symbol: str
     timestamp: datetime
     indicator_type: str
@@ -19,9 +20,6 @@ class IndicatorResponse(BaseModel):
     class Config:
         from_attributes = True
 
-    def model_dump(self, *args, **kwargs):
-        """Compatibility shim so callers can rely on the Pydantic v2 API."""
-        return self.dict(*args, **kwargs)
 
 @router.get("/indicators", response_model=List[IndicatorResponse])
 async def get_indicators(
