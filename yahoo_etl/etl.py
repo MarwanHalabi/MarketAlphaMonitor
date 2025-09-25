@@ -129,7 +129,7 @@ class YahooETL:
             data: DataFrame with price data
         
         Returns:
-            DataFrame with calculated indicators
+            DataFrame with calculated indicators.
         """
         if data.empty or len(data) < 20:  # Need at least 20 data points for indicators
             return pd.DataFrame()
