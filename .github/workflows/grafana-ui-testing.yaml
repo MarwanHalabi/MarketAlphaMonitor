@@ -33,7 +33,7 @@ jobs:
       ENVIRONMENT: ${{ github.event.inputs.environment || 'staging' }}
       BROWSER: ${{ github.event.inputs.browser || 'chrome' }}
       HEADLESS: "true"
-      GRAFANA_URL: 'http://localhost:3000'
+      GRAFANA_URL: 'http://46.51.197.134:3000'
 
     steps:
     - name: Checkout UI testing repo
