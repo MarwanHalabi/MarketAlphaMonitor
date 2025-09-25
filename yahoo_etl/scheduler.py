@@ -46,7 +46,7 @@ def main():
     # Schedule ETL to run every 5 minutes
     schedule.every(5).minutes.do(run_etl)
     
-    # Schedule cleanup to run daily at 2 AM
+    # Schedule cleanup to run daily at 2 AM.
     schedule.every().day.at("02:00").do(cleanup_old_data)
     
     # Run initial ETL
