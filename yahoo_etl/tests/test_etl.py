@@ -14,7 +14,7 @@ except ModuleNotFoundError:  # pragma: no cover - handled during tests
 
 if pd is not None:
     from yahoo_etl.etl import YahooETL
-else:  # pragma: no cover - executed when pandas is unavailable
+else:  # pragma: no cover - executed when pandas is unavailable.
     YahooETL = None
 
 
