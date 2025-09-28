@@ -105,11 +105,11 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  ts as time,\n  symbol,\n  c as value\nFROM prices\nWHERE ts >= NOW() - INTERVAL '24 hours'\nORDER BY ts",
+          "rawSql": "SELECT\n  $__time(ts),\n  symbol AS metric,\n  c AS value\nFROM prices\nWHERE $__timeFilter(ts)\nORDER BY ts",
           "refId": "A"
         }
       ],
-      "title": "Stock Prices (Last 24 Hours)",
+      "title": "Stock Prices",
       "type": "timeseries"
     },
     {
@@ -195,11 +195,11 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  ts as time,\n  symbol,\n  value\nFROM indicators\nWHERE indicator_type = 'ema' AND period = 21 AND ts >= NOW() - INTERVAL '24 hours'\nORDER BY ts",
+          "rawSql": "SELECT\n  $__time(ts),\n  symbol AS metric,\n  value\nFROM indicators\nWHERE indicator_type = 'ema' AND period = 21 AND $__timeFilter(ts)\nORDER BY ts",
           "refId": "A"
         }
       ],
-      "title": "EMA 21 (Last 24 Hours)",
+      "title": "EMA 21",
       "type": "timeseries"
     },
     {
@@ -285,11 +285,11 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  ts as time,\n  symbol,\n  value\nFROM indicators\nWHERE indicator_type = 'rsi' AND period = 14 AND ts >= NOW() - INTERVAL '24 hours'\nORDER BY ts",
+          "rawSql": "SELECT\n  $__time(ts),\n  symbol AS metric,\n  value\nFROM indicators\nWHERE indicator_type = 'rsi' AND period = 14 AND $__timeFilter(ts)\nORDER BY ts",
           "refId": "A"
         }
       ],
-      "title": "RSI 14 (Last 24 Hours)",
+      "title": "RSI 14",
       "type": "timeseries"
     },
     {
@@ -375,11 +375,11 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  ts as time,\n  symbol,\n  v as value\nFROM prices\nWHERE ts >= NOW() - INTERVAL '24 hours'\nORDER BY ts",
+          "rawSql": "SELECT\n  $__time(ts),\n  symbol AS metric,\n  v AS value\nFROM prices\nWHERE $__timeFilter(ts)\nORDER BY ts",
           "refId": "A"
         }
       ],
-      "title": "Volume (Last 24 Hours)",
+      "title": "Volume",
       "type": "timeseries"
     },
     {
@@ -465,11 +465,11 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  ts as time,\n  symbol,\n  c as value\nFROM prices\nWHERE ts >= NOW() - INTERVAL '24 hours'\nORDER BY ts",
+          "rawSql": "SELECT\n  $__time(ts),\n  symbol AS metric,\n  c AS value\nFROM prices\nWHERE $__timeFilter(ts)\nORDER BY ts",
           "refId": "A"
         }
       ],
-      "title": "Stock Prices Overview (Last 24 Hours)",
+      "title": "Stock Prices Overview",
       "type": "timeseries"
     }
   ],
@@ -485,7 +485,7 @@
     "list": []
   },
   "time": {
-    "from": "now-24h",
+    "from": "now-7d",
     "to": "now"
   },
   "timepicker": {},
