@@ -45,7 +45,7 @@ services:
     command: python scheduler.py
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:${GRAFANA_VERSION:-10.4.5}
     ports:
       - "3000:3000"
     environment:
