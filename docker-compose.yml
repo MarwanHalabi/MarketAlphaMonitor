@@ -45,14 +45,19 @@ services:
     command: python scheduler.py
 
   grafana:
-    image: grafana/grafana:${GRAFANA_VERSION:-10.4.5}
+    image: grafana/grafana:${GRAFANA_VERSION:-11.2.2}
     ports:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
+      # Enable AWS default credentials chain in the container
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_SDK_LOAD_CONFIG: ${AWS_SDK_LOAD_CONFIG:-1}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
+      # Optionally mount your local AWS profile for default credentials chain
+      # - ${HOME}/.aws:/usr/share/grafana/.aws:ro
     depends_on:
       - postgres
 
