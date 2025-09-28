@@ -11,6 +11,14 @@ contactPoints:
           region: eu-west-1
           topic_arn: arn:aws:sns:eu-west-1:228281126655:GrafanaAlerts
           subject: "{{ .Title }} ({{ .Status }})"
-          message: "{{ range .Alerts }}[{{ .Labels.symbol | default \"N/A\" }}] {{ .Annotations.summary | default .Labels.alertname }} — state: {{ .Status }}{{ end }}"
+          # Avoid functions like `default` that are not available here.
+          # Always produce a non-empty message, even for Contact Point tests.
+          message: |
+            {{- if .Alerts -}}
+            {{- range .Alerts -}}
+            [{{ index .Labels "symbol" }}] {{ if .Annotations.summary }}{{ .Annotations.summary }}{{ else }}{{ .Labels.alertname }}{{ end }} — state: {{ .Status }}
+            {{- end -}}
+            {{- else -}}
+            Grafana test alert: {{ .Title }} ({{ .Status }})
+            {{- end -}}
         disableResolveMessage: false
-
