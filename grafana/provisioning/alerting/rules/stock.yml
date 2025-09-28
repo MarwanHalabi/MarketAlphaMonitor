@@ -1,0 +1,57 @@
+apiVersion: 1
+
+# Alert rules provisioning
+groups:
+  - orgId: 1
+    name: Stock Rules
+    folder: Market Tracker
+    interval: 1m
+    rules:
+      - uid: aapl_gt_260
+        title: AAPL Price > 260
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: postgres
+            relativeTimeRange:
+              from: 600   # 10 minutes
+              to: 0
+            model:
+              refId: A
+              datasource:
+                type: postgres
+                uid: postgres
+              format: time_series
+              intervalMs: 60000
+              maxDataPoints: 43200
+              rawQuery: true
+              rawSql: |
+                SELECT
+                  $__time(ts),
+                  c AS value
+                FROM prices
+                WHERE symbol = 'AAPL' AND $__timeFilter(ts)
+                ORDER BY ts
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              threshold: 260
+              operator: gt
+        labels:
+          symbol: AAPL
+        annotations:
+          summary: "AAPL price above 260 USD"
+          description: "Last AAPL close (1m) > 260"
+        for: 0m
+        isPaused: false
+

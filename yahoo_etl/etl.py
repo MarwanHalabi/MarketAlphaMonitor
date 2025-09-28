@@ -60,6 +60,11 @@ class YahooETL:
             
             # Add symbol column
             data['symbol'] = symbol.upper()
+
+            # Ensure price precision to 2 decimals before saving
+            # (DB enforces NUMERIC(10,2) but rounding here avoids float artifacts)
+            if all(col in data.columns for col in ['o', 'h', 'l', 'c']):
+                data[['o', 'h', 'l', 'c']] = data[['o', 'h', 'l', 'c']].round(2)
             
             # Ensure timestamp is timezone aware (fix timezone issue)
             if 'ts' in data.columns:

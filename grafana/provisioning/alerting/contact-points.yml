@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# Contact points provisioning
+contactPoints:
+  - orgId: 1
+    name: StockAlerts
+    receivers:
+      - uid: stockalerts-sns
+        type: sns
+        settings:
+          region: eu-west-1
+          topic_arn: arn:aws:sns:eu-west-1:228281126655:GrafanaAlerts
+          subject: "{{ .Title }} ({{ .Status }})"
+          message: "{{ range .Alerts }}[{{ .Labels.symbol | default \"N/A\" }}] {{ .Annotations.summary | default .Labels.alertname }} — state: {{ .Status }}{{ end }}"
+        disableResolveMessage: false
+

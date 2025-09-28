@@ -32,6 +32,7 @@
           "color": {
             "mode": "palette-classic"
           },
+          "decimals": 2,
           "custom": {
             "axisLabel": "",
             "axisPlacement": "auto",
@@ -74,7 +75,8 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "short",
+          "decimals": 2
         },
         "overrides": []
       },
@@ -122,6 +124,7 @@
           "color": {
             "mode": "palette-classic"
           },
+          "decimals": 2,
           "custom": {
             "axisLabel": "",
             "axisPlacement": "auto",
@@ -164,7 +167,8 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "short",
+          "decimals": 2
         },
         "overrides": []
       },
@@ -212,6 +216,7 @@
           "color": {
             "mode": "palette-classic"
           },
+          "decimals": 2,
           "custom": {
             "axisLabel": "",
             "axisPlacement": "auto",
@@ -254,7 +259,8 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "short",
+          "decimals": 2
         },
         "overrides": []
       },
