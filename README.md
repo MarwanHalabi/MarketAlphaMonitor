@@ -16,9 +16,64 @@ It includes:
 
 ## ⚙️ Architecture
 
+Below are two diagrams that describe the system. If viewing on GitHub, Mermaid renders inline.
+
+```mermaid
+graph LR
+  subgraph Users
+    U[Viewer]
+  end
+
+  subgraph Docker Compose
+    ETL[yahoo_etl\n(Python + yfinance)]
+    API[market-tracker\n(FastAPI)]
+    DB[(PostgreSQL)]
+    G[Grafana]
+  end
+
+  U -->|HTTP :3000| G
+  U -->|HTTP :8000| API
+
+  ETL -->|Fetch OHLCV 1m\nfrom Yahoo Finance| ETL
+  ETL -->|UPSERT prices, indicators| DB
+  API -->|Read| DB
+  G -->|Query| DB
+
+  subgraph Alerts
+    CP[Grafana Contact Point\n(Amazon SNS)]
+    SNS[(AWS SNS Topic)]
+  end
+
+  G -->|Alert rules\n(e.g., AAPL > 260)| CP
+  CP -->|Publish| SNS
+  SNS -->|Notify subscribers\n(SMS/Email/Lambda/... )| U
+
+  classDef comp fill:#1f78b4,stroke:#0d3a5a,stroke-width:1,color:#fff
+  classDef data fill:#33a02c,stroke:#145c14,stroke-width:1,color:#fff,stroke-dasharray: 3 2
+  classDef svc fill:#6a3d9a,stroke:#361a52,stroke-width:1,color:#fff
+  class ETL,API,G comp
+  class DB data
+  class CP,SNS svc
 ```
-Yahoo Finance → ETL Service → PostgreSQL → Grafana
-                          ↘ FastAPI API
+
+Alert flow (detailed):
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant ETL as ETL (yahoo_etl)
+  participant DB as PostgreSQL
+  participant G as Grafana
+  participant CP as Contact Point (SNS)
+  participant SNS as AWS SNS
+  participant Sub as Subscribers
+
+  ETL->>DB: Upsert prices + indicators
+  G->>DB: Query time series (dashboard + rule)
+  G->>G: Evaluate rule (e.g., AAPL price > 260)
+  G-->>CP: Send alert payload
+  CP-->>SNS: Publish message
+  SNS-->>Sub: Deliver notification
 ```
 
 - **ETL Service (Python, `yfinance`)**
